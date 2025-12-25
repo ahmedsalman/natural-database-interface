@@ -25,11 +25,5 @@ Currently supported databases:
 - MySQL and MariaDB (using `mysqlclient`)
 - Oracle (using `cx_oracle`)
 - Microsoft SQL Server (using `pyodbc`)
-
-## Contribution
-Check the [repository on GitHub](https://github.com/SutandoTsukai181/ChatDB) and feel free to contribute!
-Suggestions, feature requests, and issue reports are more than welcome.
-
-This project is part of an internship I performed at [B.E.A.R. TELL](https://beartell.com).
 """
 )

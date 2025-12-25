@@ -78,5 +78,3 @@ If you want to build and test locally:
 - [LlamaHub 🦙](https://github.com/emptycrown/llama-hub)
 - [SQLAlchemy](https://www.sqlalchemy.org/)
 - [UI Bakery SQL playground](https://uibakery.io/sql-playground)
-
-This project is part of an internship I performed at [B.E.A.R. TELL](https://beartell.com).

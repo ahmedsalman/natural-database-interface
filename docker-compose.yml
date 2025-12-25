@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  natural-db-interface:
+    build: .
+    container_name: natural-database-interface
+    ports:
+      - "8501:8501"
+    volumes:
+      # Persist session data (optional - uncomment if needed)
+      # - ./data:/app/data
+      # Mount current directory for development (comment out for production)
+      - .:/app
+    environment:
+      # Optional: Pre-set environment variables
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # # Optional: Add a sample PostgreSQL database for testing
+  # postgres-sample:
+  #   image: postgres:15-alpine
+  #   container_name: sample-postgres-db
+  #   environment:
+  #     POSTGRES_USER: demo
+  #     POSTGRES_PASSWORD: demo123
+  #     POSTGRES_DB: sampledb
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   networks:
+  #     - app-network
+  #   # Uncomment to disable if you don't need sample database
+  #   # profiles:
+  #   #   - with-sample-db
+
+# volumes:
+#   postgres-data:
+
+networks:
+  app-network:
+    driver: bridge
