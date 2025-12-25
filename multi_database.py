@@ -1,9 +1,9 @@
 from typing import Callable, Dict, Iterable, List, Optional
 
-from llama_hub.tools.database.base import DatabaseToolSpec
-from llama_index import Document
-from llama_index.readers.base import BaseReader
-from llama_index.tools.tool_spec.base import BaseToolSpec
+from llama_index.tools.database import DatabaseToolSpec
+from llama_index.core import Document
+from llama_index.core.readers.base import BaseReader
+from llama_index.core.tools.tool_spec.base import BaseToolSpec
 from sqlalchemy import text
 from sqlalchemy.exc import InvalidRequestError
 

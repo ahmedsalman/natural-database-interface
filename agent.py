@@ -1,7 +1,7 @@
 import streamlit as st
-from llama_index.agent import OpenAIAgent
-from llama_index.agent.openai_agent import ChatMessage
-from llama_index.llms import OpenAI
+from llama_index.agent.openai import OpenAIAgent
+from llama_index.core.llms import ChatMessage
+from llama_index.llms.openai import OpenAI
 
 from common import Conversation, DatabaseProps
 from multi_database import MultiDatabaseToolSpec, TrackingDatabaseToolSpec

@@ -1,8 +1,9 @@
 import json
 import re
+import warnings
 
 import streamlit as st
-from llama_index.llms.base import ChatMessage, MessageRole
+from llama_index.core.llms import ChatMessage, MessageRole
 from sqlalchemy.exc import DBAPIError, NoSuchColumnError, NoSuchTableError
 
 from agent import get_agent
@@ -10,9 +11,10 @@ from backup import backup_conversation, load_conversation
 from common import Conversation, init_session_state
 from multi_database import NoSuchDatabaseError
 
+warnings.filterwarnings("ignore", category=RuntimeWarning, message="coroutine 'expire_cache' was never awaited")
 st.set_page_config(
     page_title="Chats",
-    page_icon="🤖",
+    page_icon="🤖"
 )
 
 # Initialize session state variables
@@ -95,7 +97,7 @@ if not conversation_exists(st.session_state.current_conversation):
     # Display form for creating a new conversation
     with st.form("new_conversation_form"):
         conversation_id = st.text_input("Conversation title")
-        agent_model = st.text_input("Agent model", value="gpt-3.5-turbo-0613", help="OpenAI model. See https://platform.openai.com/docs/models")
+        agent_model = st.text_input("Agent model", value="gpt-3.5-turbo", help="OpenAI model. See https://platform.openai.com/docs/models")
 
         database_ids = st.multiselect("Select databases", tuple(st.session_state.databases.keys()))
 
