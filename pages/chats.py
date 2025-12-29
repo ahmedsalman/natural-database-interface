@@ -1,5 +1,5 @@
 """
-Enhanced chats interface with SQL safety visualization
+Enhanced chats interface with SQL safety visualization and error recovery
 """
 
 import json
@@ -9,11 +9,18 @@ import streamlit as st
 from llama_index.core.llms import ChatMessage, MessageRole
 from sqlalchemy.exc import DBAPIError, NoSuchColumnError, NoSuchTableError
 
-from agent import get_agent
+from agent import get_enhanced_executor
 from backup import backup_conversation, load_conversation
 from common import Conversation, init_session_state
-from multi_database import NoSuchDatabaseError, QueryBlockedError
+from multi_database import QueryBlockedError
 from config import PRESET_CONFIGS
+from error_recovery import (
+    ErrorRecoveryEngine, SQLErrorClassifier, ErrorSeverity
+)
+
+# Convenience functions
+_global_classifier = SQLErrorClassifier()
+_global_recovery_engine = ErrorRecoveryEngine(_global_classifier)
 
 warnings.filterwarnings("ignore", category=RuntimeWarning, message="coroutine 'expire_cache' was never awaited")
 
@@ -71,6 +78,81 @@ def display_query(database, query, results):
             st.info("No results returned")
 
 
+def display_error_context(error_ctx):
+    """Display detailed error context with recovery information"""
+    severity_icons = {
+        ErrorSeverity.LOW: "ℹ️",
+        ErrorSeverity.MEDIUM: "⚠️",
+        ErrorSeverity.HIGH: "🚨",
+        ErrorSeverity.CRITICAL: "🔴"
+    }
+    
+    severity_colors = {
+        ErrorSeverity.LOW: "blue",
+        ErrorSeverity.MEDIUM: "orange",
+        ErrorSeverity.HIGH: "red",
+        ErrorSeverity.CRITICAL: "red"
+    }
+    
+    icon = severity_icons.get(error_ctx.severity, "❓")
+    
+    with st.expander(f"{icon} Error Details - {error_ctx.category.value.upper()}", expanded=True):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Error Classification:**")
+            st.markdown(f"- **Type:** {error_ctx.error_type}")
+            st.markdown(f"- **Category:** {error_ctx.category.value}")
+            st.markdown(f"- **Severity:** :{severity_colors[error_ctx.severity]}[{error_ctx.severity.name}]")
+            st.markdown(f"- **Retry Count:** {error_ctx.retry_count}")
+        
+        with col2:
+            st.markdown("**Recovery Strategy:**")
+            st.markdown(f"- **Strategy:** {error_ctx.strategy.value}")
+            if error_ctx.table_name:
+                st.markdown(f"- **Table:** `{error_ctx.table_name}`")
+            if error_ctx.column_name:
+                st.markdown(f"- **Column:** `{error_ctx.column_name}`")
+        
+        if error_ctx.hint:
+            st.info(f"💡 **Hint:** {error_ctx.hint}")
+        
+        if error_ctx.original_query:
+            st.markdown("**Failed Query:**")
+            st.code(error_ctx.original_query, language="sql")
+
+
+def display_error_statistics():
+    """Display error statistics in sidebar"""
+    if not st.session_state.current_conversation:
+        return
+    
+    try:
+        stats = _global_recovery_engine.get_statistics(st.session_state.current_conversation)
+        
+        if stats['total_errors'] == 0:
+            return
+        
+        with st.expander("📊 Error Statistics", expanded=False):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.metric("Total Errors", stats['total_errors'])
+                st.metric("Resolved", stats['resolved'])
+            
+            with col2:
+                resolution_rate = stats['resolution_rate'] * 100
+                st.metric("Resolution Rate", f"{resolution_rate:.1f}%")
+            
+            if stats['by_category']:
+                st.markdown("**By Category:**")
+                for category, count in stats['by_category'].items():
+                    st.markdown(f"- {category}: {count}")
+    except Exception as e:
+        # Silently fail if error recovery not initialized yet
+        pass
+
+
 def display_safety_info():
     """Display safety mode information in sidebar"""
     with st.sidebar:
@@ -107,6 +189,17 @@ def display_safety_info():
         if new_preset != current_preset:
             st.session_state.safety_preset = new_preset
             st.rerun()
+        
+        # Error statistics toggle
+        if st.session_state.current_conversation:
+            st.checkbox(
+                "Show Error Statistics",
+                value=st.session_state.show_error_stats,
+                key="show_error_stats"
+            )
+            
+            if st.session_state.show_error_stats:
+                display_error_statistics()
 
 
 def display_query_blocked_error(error: QueryBlockedError):
@@ -212,8 +305,8 @@ else:
     conversation_id = st.session_state.current_conversation
     conversation: Conversation = st.session_state.conversations[conversation_id]
     
-    # Title with safety indicator
-    col1, col2 = st.columns([3, 1])
+    # Title with safety indicator and error count
+    col1, col2, col3 = st.columns([3, 1, 1])
     with col1:
         st.title(conversation_id)
     with col2:
@@ -222,6 +315,20 @@ else:
             st.success("🔒 READ-ONLY")
         else:
             st.warning("🔓 READ-WRITE")
+    with col3:
+        # Show error indicator if errors exist
+        try:
+            stats = _global_recovery_engine.get_statistics(conversation_id)
+            if stats['total_errors'] > 0:
+                resolved_pct = int(stats['resolution_rate'] * 100)
+                if resolved_pct >= 70:
+                    st.success(f"{resolved_pct}% resolved")
+                elif resolved_pct >= 40:
+                    st.warning(f"{resolved_pct}% resolved")
+                else:
+                    st.error(f"{resolved_pct}% resolved")
+        except:
+            pass
     
     # Display chat messages from history
     for message in conversation.messages:
@@ -231,8 +338,8 @@ else:
             for database, query, results in message.query_results:
                 display_query(database, query, results)
     
-    # Initialize the agent with safety preset
-    get_agent(
+    # Initialize the enhanced agent executor
+    executor = get_enhanced_executor(
         conversation_id,
         conversation.last_update_timestamp,
         st.session_state.safety_preset
@@ -241,7 +348,7 @@ else:
     if len(conversation.messages) == 0:
         # Add initial message
         role = "assistant"
-        content = "How can I help you today? I can query your databases safely and securely."
+        content = "How can I help you today? I can query your databases safely and will learn from any errors we encounter."
         conversation.add_message(role, content)
         
         with st.chat_message(role):
@@ -265,113 +372,40 @@ else:
         # Add user message to chat history
         conversation.add_message("user", prompt)
         
-        # Retrieve agent
-        agent = get_agent(
-            conversation_id,
-            conversation.last_update_timestamp,
-            st.session_state.safety_preset
-        )
-        
-        # Initialize auto retry count
-        auto_retry_count = 3
-        show_retry_buttons = False
-        
         # Display assistant response in chat message container
         with st.chat_message("assistant"):
             message_placeholder = st.empty()
-            full_response = ""
+            status_placeholder = st.empty()
             
-            exception: str
-            system_message: str
-            
-            while True:
-                try:
-                    exception = ""
-                    system_message = ""
+            # Show progress indicator
+            with status_placeholder:
+                with st.status("Processing query...", expanded=True) as status:
+                    st.write("🔄 Executing query with error recovery...")
                     
-                    if use_streaming:
-                        # Incrementally display response as it is streamed from the agent
-                        for response in agent.stream_chat(prompt).response_gen:
-                            full_response += response
-                            message_placeholder.markdown(full_response + "▌")
-                    else:
-                        # Receive the whole response before displaying it
-                        message_placeholder.markdown("*Thinking...*")
-                        full_response = agent.chat(prompt).response
-                
-                # Handle query blocked by safety validation
-                except QueryBlockedError as e:
-                    display_query_blocked_error(e)
-                    
-                    full_response = "[System] Your query was blocked by the safety system.\n\n"
-                    full_response += f"Reason: {str(e)}\n\n"
-                    full_response += "Please rephrase your question or check the safety settings."
-                    
-                    show_retry_buttons = False  # Don't show retry for blocked queries
-                    break
-                
-                # Give the agent some useful info about the error and what it needs to do to avoid it
-                except NoSuchColumnError as e:
-                    exception = e
-                    system_message = f"Error: {type(e).__name__}\n"
-                    system_message += "Use describe_tables() function to retrieve details about the table."
-                
-                except NoSuchTableError as e:
-                    exception = e
-                    system_message = f"Error: {type(e).__name__}\n"
-                    system_message += "Use list_tables() function to get a list of the tables."
-                
-                except NoSuchDatabaseError as e:
-                    exception = e
-                    system_message = f"Error: {type(e).__name__}\n"
-                    system_message += "Use list_databases() function to get a list of the databases."
-                
-                except DBAPIError as e:
-                    exception = e.orig
-                    system_message = f"Error: {type(e.orig).__name__}\n"
-                    system_message += "Use describe_tables() function to retrieve details about the table."
-                
-                except Exception as e:
-                    # This is NOT an exception the agent should see
-                    
-                    # Show the error to the user and add a "retry" button
-                    full_response = "[System] An error has occurred:\n\n"
-                    full_response += "```" + str(e).replace("\n", "\n\n") + "```"
-                    
-                    show_retry_buttons = True
-                else:
-                    if full_response == "":
-                        # Something wrong happened
-                        full_response = "[System] An error has occurred, possibly related to streaming."
-                        show_retry_buttons = True
-                
-                if exception:
-                    # Let the agent know about the error
-                    agent._memory.put(
-                        ChatMessage(
-                            content=system_message,
-                            role=MessageRole.SYSTEM,
-                        )
+                    # Execute with intelligent recovery
+                    response, success, error_ctx = executor.execute_with_recovery(
+                        prompt,
+                        max_retries=3,
+                        streaming=use_streaming
                     )
                     
-                    # Give the agent another chance to try the tool that was recommended in the previous error
-                    if auto_retry_count > 0:
-                        auto_retry_count -= 1
-                        continue
-                    
-                    # Show the error to the user
-                    full_response = "[System] An SQL error has occurred:\n\n"
-                    full_response += f'Error type: "{type(exception).__name__}"\n\n'
-                    full_response += "```" + str(exception).replace("\n", "\n\n") + "```"
-                    
-                    show_retry_buttons = True
+                    if success:
+                        status.update(label="✅ Query successful!", state="complete")
+                    else:
+                        status.update(label="❌ Query failed after retries", state="error")
+            
+            # Clear status after completion
+            status_placeholder.empty()
+            
+            # Display response
+            message_placeholder.markdown(response)
+            
+            # Display error context if available
+            if error_ctx and not success:
+                display_error_context(error_ctx)
                 
-                break
-            
-            # Display full message once it is retrieved
-            message_placeholder.markdown(full_response)
-            
-            if show_retry_buttons:
+                # Show retry buttons
+                st.markdown("**Try Again:**")
                 col1, col2 = st.columns(2)
                 with col1:
                     st.button("🔄 Retry", on_click=retry_chat, args=[prompt, True])
@@ -387,4 +421,4 @@ else:
             conversation.query_results_queue = []
             
             # Add assistant message to chat history
-            conversation.add_message("assistant", full_response, query_results)
+            conversation.add_message("assistant", response, query_results)
