@@ -4,15 +4,25 @@ llama-index-core==0.11.20
 llama-index-agent-openai==0.3.0
 llama-index-llms-openai==0.2.10
 llama-index-tools-database==0.2.0
+
 # --- LLM & Logic ---
 openai>=1.0.0
 langchain>=0.1.0
 langchain-openai>=0.1.0
 jsonpickle==3.0.1
+
 # --- Database Drivers ---
 psycopg2-binary==2.9.9
 cryptography==42.0.5
 pyodbc==5.1.0
 cx_oracle==8.3.0
+
 # --- AI Helpers ---
 transformers==4.38.0
+
+# --- SQL Safety Layer (NEW) ---
+sqlparse==0.4.4
+
+# --- Testing (Development Only) ---
+pytest==7.4.0
+pytest-cov==4.1.0
