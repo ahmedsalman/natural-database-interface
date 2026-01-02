@@ -4,10 +4,12 @@ Common classes and session state management with error recovery support
 
 import re
 from datetime import datetime
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import openai
 import streamlit as st
+
+from model_config import LLMProvider
 
 
 class DatabaseProps:
@@ -76,11 +78,18 @@ class Conversation:
 
 def init_session_state():
     """
-    Initialize all session state variables including error recovery state
+    Initialize all session state variables including multi-provider support
     """
-    # OpenAI API key
+    # OpenAI API key (legacy - kept for backward compatibility)
     if "openai_key" not in st.session_state:
         st.session_state.openai_key = ""
+    
+    # Multi-provider API keys
+    if "api_keys" not in st.session_state:
+        st.session_state.api_keys: Dict[LLMProvider, str] = {
+            LLMProvider.OPENAI: "",
+            LLMProvider.ANTHROPIC: ""
+        }
 
     # Database connections
     if "databases" not in st.session_state:
@@ -98,24 +107,87 @@ def init_session_state():
     if "retry" not in st.session_state:
         st.session_state.retry = None
 
-    # NEW: Error recovery and statistics state
+    # Error recovery and statistics state
     if "show_error_stats" not in st.session_state:
         st.session_state.show_error_stats = False
     
-    # NEW: Error recovery enabled flag (for gradual rollout)
+    # Error recovery enabled flag
     if "error_recovery_enabled" not in st.session_state:
         st.session_state.error_recovery_enabled = True
     
-    # NEW: Track if error recovery is initialized
+    # Track if error recovery is initialized
     if "error_recovery_initialized" not in st.session_state:
         st.session_state.error_recovery_initialized = False
+    
+    # Selected provider for UI
+    if "selected_provider" not in st.session_state:
+        st.session_state.selected_provider = LLMProvider.OPENAI
 
 
-def set_openai_api_key(api_key):
-    """Set OpenAI API key in both openai module and session state"""
-    # Set API key in openai module
+def set_openai_api_key(api_key: str):
+    """
+    Set OpenAI API key in both openai module and session state
+    Legacy function for backward compatibility
+    """
     openai.api_key = api_key
     st.session_state.openai_key = api_key
+    st.session_state.api_keys[LLMProvider.OPENAI] = api_key
+
+
+def set_api_key(provider: LLMProvider, api_key: str):
+    """
+    Set API key for a specific provider
+    
+    Args:
+        provider: LLM provider enum
+        api_key: API key string
+    """
+    st.session_state.api_keys[provider] = api_key
+    
+    # Set in provider-specific modules
+    if provider == LLMProvider.OPENAI:
+        openai.api_key = api_key
+        st.session_state.openai_key = api_key  # Backward compatibility
+
+
+def get_api_key(provider: LLMProvider) -> Optional[str]:
+    """
+    Get API key for a specific provider
+    
+    Args:
+        provider: LLM provider enum
+        
+    Returns:
+        API key string or None if not set
+    """
+    return st.session_state.api_keys.get(provider, "")
+
+
+def has_api_key(provider: LLMProvider) -> bool:
+    """
+    Check if API key is set for a provider
+    
+    Args:
+        provider: LLM provider enum
+        
+    Returns:
+        True if API key is set, False otherwise
+    """
+    key = get_api_key(provider)
+    return bool(key and key.strip())
+
+
+def get_all_api_keys_status() -> Dict[LLMProvider, bool]:
+    """
+    Get status of all API keys
+    
+    Returns:
+        Dictionary mapping provider to key status (True if set)
+    """
+    return {
+        provider: has_api_key(provider)
+        for provider in LLMProvider
+    }
 
 
 def get_conversation(conversation_id: str) -> Conversation:
@@ -175,7 +247,7 @@ def create_conversation(
     
     Args:
         conversation_id: Unique ID for the conversation
-        agent_model: OpenAI model to use
+        agent_model: Model to use (e.g., gpt-4o, claude-3-5-sonnet-20241022)
         database_ids: List of database IDs to connect to
         
     Returns:
@@ -304,7 +376,9 @@ def get_session_state_summary() -> Dict:
         Dictionary with session state statistics
     """
     return {
-        'has_api_key': bool(st.session_state.openai_key),
+        'has_openai_key': has_api_key(LLMProvider.OPENAI),
+        'has_anthropic_key': has_api_key(LLMProvider.ANTHROPIC),
+        'api_keys_status': get_all_api_keys_status(),
         'database_count': len(st.session_state.databases),
         'conversation_count': len(st.session_state.conversations),
         'current_conversation': st.session_state.current_conversation,

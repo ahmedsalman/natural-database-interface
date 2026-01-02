@@ -1,19 +1,25 @@
 """
 Enhanced agent module with SQL validation and error recovery
+Supports SQL validation and error recovery
 """
 
 import streamlit as st
 from llama_index.agent.openai import OpenAIAgent
 from llama_index.core.llms import ChatMessage, MessageRole
 from llama_index.llms.openai import OpenAI
-from typing import Optional, Tuple
+from llama_index.llms.anthropic import Anthropic
+from typing import Optional, Tuple, Union
 
-from common import Conversation, DatabaseProps
+from common import Conversation, DatabaseProps, get_api_key, has_api_key
 from multi_database import MultiDatabaseToolSpec, TrackingDatabaseToolSpec, QueryBlockedError
 from config import Config, get_preset_config
 from error_recovery import (
     ErrorRecoveryEngine, SQLErrorClassifier, ErrorContext,
     RecoveryStrategy, ErrorCategory
+)
+from model_config import (
+    get_model_config, get_provider_for_model, LLMProvider,
+    validate_model_id
 )
 
 
@@ -23,14 +29,50 @@ def get_llm(model: str, api_key: str):
     Get or create LLM instance
     
     Args:
-        model: OpenAI model name
-        api_key: OpenAI API key (used to invalidate cache)
+        model: Model identifier (e.g., gpt-4o, claude-3-5-sonnet-20241022)
+        api_key: API key (used to invalidate cache)
         
     Returns:
-        OpenAI LLM instance
+        LLM instance
+        
+    Raises:
+        ValueError: If model is not supported or API key is missing
     """
     _ = api_key  # Force cache invalidation on API key change
-    return OpenAI(model=model)
+    
+    # Validate model
+    if not validate_model_id(model):
+        raise ValueError(f"Unsupported model: {model}")
+    
+    # Get model configuration
+    model_config = get_model_config(model)
+    provider = model_config.provider
+    
+    # Check API key
+    if not has_api_key(provider):
+        provider_name = provider.value.capitalize()
+        raise ValueError(f"{provider_name} API key not set. Please configure in Settings.")
+    
+    # Get the appropriate API key
+    provider_api_key = get_api_key(provider)
+    
+    # Create LLM instance based on provider
+    if provider == LLMProvider.OPENAI:
+        return OpenAI(
+            model=model,
+            api_key=provider_api_key,
+            temperature=0.1,  # Lower temperature for more consistent SQL generation
+            max_tokens=4096
+        )
+    elif provider == LLMProvider.ANTHROPIC:
+        return Anthropic(
+            model=model,
+            api_key=provider_api_key,
+            temperature=0.1,
+            max_tokens=4096
+        )
+    else:
+        raise ValueError(f"Unsupported provider: {provider}")
 
 
 @st.cache_resource(show_spinner="Connecting to database...")
@@ -97,53 +139,17 @@ def get_recovery_engine() -> ErrorRecoveryEngine:
     return ErrorRecoveryEngine(classifier)
 
 
-@st.cache_resource(show_spinner="Creating agent...")
-def get_agent(
-    conversation_id: str,
-    last_update_timestamp: float,
-    safety_preset: str = 'production'
-):
+def get_system_prompt(provider: LLMProvider) -> str:
     """
-    Get or create agent with database tools and error recovery
+    Get system prompt optimized for the specific provider
     
     Args:
-        conversation_id: Conversation identifier
-        last_update_timestamp: Timestamp to invalidate cache
-        safety_preset: configuration preset
+        provider: LLM provider
         
     Returns:
-        OpenAIAgent instance with safe database tools
+        System prompt string
     """
-    # Used for invalidating the cache when we want to force create a new agent
-    _ = last_update_timestamp
-    
-    conversation: Conversation = st.session_state.conversations[conversation_id]
-    
-    # Create multi-database tool with configuration
-    database_tools = MultiDatabaseToolSpec(
-        handler=database_spec_handler,
-        safety_preset=safety_preset
-    )
-    
-    # Add database connections with checks
-    for database_id in conversation.database_ids:
-        db_spec = get_database_spec(database_id, safety_preset)
-        database_tools.add_database_tool_spec(database_id, db_spec)
-    
-    # Convert to tool list
-    tools = database_tools.to_tool_list()
-    
-    # Load chat history from the conversation's messages
-    chat_history = list(map(
-        lambda m: ChatMessage(role=m.role, content=m.content),
-        conversation.messages
-    ))
-    
-    # Create an LLM with the specified model
-    llm = get_llm(conversation.agent_model, st.session_state.openai_key)
-    
-    # Enhanced system prompt with IMMEDIATE EXECUTION directive and error recovery
-    system_prompt = """You are a helpful AI assistant that can query databases using SQL.
+    base_prompt = """You are a helpful AI assistant that can query databases using SQL.
 
 CRITICAL EXECUTION RULE
 When a user asks a question about the database, you MUST:
@@ -205,7 +211,99 @@ Final attempt: Ask user for clarification
 Remember: Your PRIMARY JOB is to EXECUTE queries and return REAL DATA, not to explain what you could do.
 """
     
+    # Provider-specific additions
+    if provider == LLMProvider.ANTHROPIC:
+        # Claude responds well to structured thinking
+        base_prompt += """
+
+CLAUDE-SPECIFIC GUIDANCE:
+- Think step-by-step before constructing queries
+- Use <thinking> tags internally if helpful for complex queries
+- Be precise and methodical in error analysis
+- Leverage your strong reasoning for query optimization
+"""
+    elif provider == LLMProvider.OPENAI:
+        # GPT models benefit from explicit function calling guidance
+        base_prompt += """
+
+GPT-SPECIFIC GUIDANCE:
+- Use function calling precisely - one tool call per action
+- Be concise in your explanations
+- Focus on efficiency in query execution
+- Prioritize quick response with streaming
+"""
+    
+    return base_prompt
+
+
+@st.cache_resource(show_spinner="Creating agent...")
+def get_agent(
+    conversation_id: str,
+    last_update_timestamp: float,
+    safety_preset: str = 'production'
+):
+    """
+    Get or create agent with database tools and error recovery
+    Supports both OpenAI and Anthropic models
+    
+    Args:
+        conversation_id: Conversation identifier
+        last_update_timestamp: Timestamp to invalidate cache
+        safety_preset: configuration preset
+        
+    Returns:
+        Tuple of (Agent instance, database_tools)
+        
+    Raises:
+        ValueError: If model is not supported or API key is missing
+    """
+    # Used for invalidating the cache when we want to force create a new agent
+    _ = last_update_timestamp
+    
+    conversation: Conversation = st.session_state.conversations[conversation_id]
+    
+    # Get model and validate
+    model_id = conversation.agent_model
+    if not validate_model_id(model_id):
+        raise ValueError(f"Invalid model: {model_id}")
+    
+    model_config = get_model_config(model_id)
+    provider = model_config.provider
+    
+    # Check API key
+    if not has_api_key(provider):
+        provider_name = provider.value.capitalize()
+        raise ValueError(f"{provider_name} API key not set")
+    
+    # Create multi-database tool with configuration
+    database_tools = MultiDatabaseToolSpec(
+        handler=database_spec_handler,
+        safety_preset=safety_preset
+    )
+    
+    # Add database connections with checks
+    for database_id in conversation.database_ids:
+        db_spec = get_database_spec(database_id, safety_preset)
+        database_tools.add_database_tool_spec(database_id, db_spec)
+    
+    # Convert to tool list
+    tools = database_tools.to_tool_list()
+    
+    # Load chat history from the conversation's messages
+    chat_history = list(map(
+        lambda m: ChatMessage(role=m.role, content=m.content),
+        conversation.messages
+    ))
+    
+    # Create an LLM with the specified model
+    api_key = get_api_key(provider)
+    llm = get_llm(model_id, api_key)
+    
+    # Get provider-optimized system prompt
+    system_prompt = get_system_prompt(provider)
+    
     # Create the agent
+    # Note: OpenAIAgent works with both OpenAI and Anthropic models via LlamaIndex
     agent = OpenAIAgent.from_tools(
         tools,
         llm=llm,
@@ -220,6 +318,7 @@ Remember: Your PRIMARY JOB is to EXECUTE queries and return REAL DATA, not to ex
 class EnhancedAgentExecutor:
     """
     Wrapper for agent execution with intelligent error recovery
+    Supports both OpenAI and Anthropic models
     """
     
     def __init__(
@@ -449,3 +548,26 @@ def get_error_statistics(conversation_id: str) -> dict:
     """
     recovery_engine = get_error_recovery_engine()
     return recovery_engine.get_statistics(conversation_id)
+
+
+def get_supported_models_info() -> dict:
+    """
+    Get information about all supported models
+    
+    Returns:
+        Dictionary with model information
+    """
+    from model_config import MODEL_CATALOG
+    
+    return {
+        model_id: {
+            'name': config.name,
+            'provider': config.provider.value,
+            'tier': config.tier.value,
+            'context_window': config.context_window,
+            'cost_input': config.cost_per_1m_input,
+            'cost_output': config.cost_per_1m_output,
+            'recommended': config.recommended_for_sql
+        }
+        for model_id, config in MODEL_CATALOG.items()
+    }
