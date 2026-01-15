@@ -120,9 +120,9 @@ MODEL_CATALOG: Dict[str, ModelConfig] = {
     ),
     
     # Anthropic Claude Models
-    "claude-3-5-sonnet-20241022": ModelConfig(
-        id="claude-3-5-sonnet-20241022",
-        name="Claude 3.5 Sonnet",
+    "claude-sonnet-4-20250514": ModelConfig(
+        id="claude-sonnet-4-20250514",
+        name="Claude 4 Sonnet",
         provider=LLMProvider.ANTHROPIC,
         tier=ModelTier.RECOMMENDED,
         description="Excellent reasoning - Great for complex SQL",
@@ -133,22 +133,9 @@ MODEL_CATALOG: Dict[str, ModelConfig] = {
         cost_per_1m_output=15.00,
         recommended_for_sql=True
     ),
-    "claude-3-5-sonnet-20240620": ModelConfig(
-        id="claude-3-5-sonnet-20240620",
-        name="Claude 3.5 Sonnet (Jun 2024)",
-        provider=LLMProvider.ANTHROPIC,
-        tier=ModelTier.RECOMMENDED,
-        description="Previous version - Still excellent",
-        context_window=200000,
-        supports_streaming=True,
-        supports_function_calling=True,
-        cost_per_1m_input=3.00,
-        cost_per_1m_output=15.00,
-        recommended_for_sql=True
-    ),
-    "claude-3-opus-20240229": ModelConfig(
-        id="claude-3-opus-20240229",
-        name="Claude 3 Opus",
+    "claude-opus-4-1-20250805": ModelConfig(
+        id="claude-opus-4-1-20250805",
+        name="Claude 4 Opus",
         provider=LLMProvider.ANTHROPIC,
         tier=ModelTier.PREMIUM,
         description="Most capable - Best for very complex scenarios",
@@ -157,19 +144,6 @@ MODEL_CATALOG: Dict[str, ModelConfig] = {
         supports_function_calling=True,
         cost_per_1m_input=15.00,
         cost_per_1m_output=75.00,
-        recommended_for_sql=True
-    ),
-    "claude-3-sonnet-20240229": ModelConfig(
-        id="claude-3-sonnet-20240229",
-        name="Claude 3 Sonnet",
-        provider=LLMProvider.ANTHROPIC,
-        tier=ModelTier.BUDGET,
-        description="Balanced performance - Good value",
-        context_window=200000,
-        supports_streaming=True,
-        supports_function_calling=True,
-        cost_per_1m_input=3.00,
-        cost_per_1m_output=15.00,
         recommended_for_sql=True
     ),
     "claude-3-haiku-20240307": ModelConfig(

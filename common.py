@@ -5,6 +5,7 @@ Common classes and session state management with error recovery support
 import re
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
+from urllib.parse import urlparse
 
 import openai
 import streamlit as st
@@ -30,6 +31,17 @@ class DatabaseProps:
 
         # Use fixed password length
         return f'{self.uri[:match.start(0) + 1]}{"*" * 8}{self.uri[match.end(0) - 1:]}'
+
+    @property
+    def db_type(self) -> str:
+        """
+        Database engine derived from URI
+        Examples: postgresql, mysql, sqlite
+        """
+        if not self.uri:
+            return "Unknown"
+
+        return urlparse(self.uri).scheme
 
 
 class Message:
@@ -247,7 +259,7 @@ def create_conversation(
     
     Args:
         conversation_id: Unique ID for the conversation
-        agent_model: Model to use (e.g., gpt-4o, claude-3-5-sonnet-20241022)
+        agent_model: Model to use (e.g., gpt-4o, claude-sonnet-4-20250514)
         database_ids: List of database IDs to connect to
         
     Returns:

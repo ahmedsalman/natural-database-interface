@@ -29,7 +29,7 @@ def get_llm(model: str, api_key: str):
     Get or create LLM instance
     
     Args:
-        model: Model identifier (e.g., gpt-4o, claude-3-5-sonnet-20241022)
+        model: Model identifier (e.g., gpt-4o, claude-sonnet-4-20250514)
         api_key: API key (used to invalidate cache)
         
     Returns:

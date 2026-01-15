@@ -26,6 +26,14 @@ transformers==4.38.0
 # --- SQL Safety Layer ---
 sqlparse==0.4.4
 
+# --- Dashboard & Visualization  ---
+plotly==5.18.0
+pandas==2.1.4
+numpy==1.26.3
+scipy==1.11.4
+
+redis==5.0.1
+
 # --- Testing (Development Only) ---
 pytest==7.4.0
 pytest-cov==4.1.0
